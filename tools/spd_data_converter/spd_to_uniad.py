@@ -4,6 +4,10 @@
 # Copyright (c) DAIR-V2X. All rights reserved.                   #
 #----------------------------------------------------------------#
 
+import sys, os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+import compat  # noqa: F401 – patches mmcv/mmdet/mmdet3d APIs
+
 import mmcv
 import numpy as np
 import os

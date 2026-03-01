@@ -44,6 +44,15 @@ class SPDE2EDataset(NuScenesDataset):
     This dataset only add camera intrinsics and extrinsics to the results.
     """
 
+    # mmdet3d 1.x class-level attributes removed in 2.x
+    ErrNameMapping = {
+        'trans_err': 'mATE',
+        'scale_err': 'mASE',
+        'orient_err': 'mAOE',
+        'vel_err':    'mAVE',
+        'attr_err':   'mAAE',
+    }
+
     def __init__(self,
                 queue_length=4,
                 bev_size=(200, 200),
@@ -96,7 +105,20 @@ class SPDE2EDataset(NuScenesDataset):
 
         self.is_debug = is_debug
         self.len_debug = len_debug
+        # mmdet3d 2.x renamed 'classes' kwarg to 'metainfo={'classes':...}'
+        if 'classes' in kwargs and 'metainfo' not in kwargs:
+            kwargs['metainfo'] = {'classes': kwargs.pop('classes')}
+        elif 'classes' in kwargs:
+            kwargs.pop('classes')
+        # mmdet3d 2.x BaseDataset._join_prefix() prepends data_root to ann_file,
+        # but mmdet3d 1.x treated ann_file as a path relative to cwd. Convert to
+        # absolute so _join_prefix leaves it untouched.
+        if 'ann_file' in kwargs and not osp.isabs(kwargs['ann_file']):
+            kwargs['ann_file'] = osp.abspath(kwargs['ann_file'])
         super().__init__(*args, **kwargs)
+        # mmdet3d 2.x stores class names in metainfo; restore 1.x CLASSES attr
+        if not hasattr(self, 'CLASSES') and hasattr(self, 'metainfo'):
+            self.CLASSES = self.metainfo.get('classes', [])
         self.queue_length = queue_length
         self.overlap_test = overlap_test
         self.bev_size = bev_size
@@ -181,12 +203,52 @@ class SPDE2EDataset(NuScenesDataset):
         self.class_range=class_range
         self.new_range_100 = new_range_100
         self.other_agent_names = other_agent_names
+        self.eval_version = 'detection_cvpr_2019'
+        from nuscenes.eval.detection.config import config_factory as _cfg_factory
+        self.eval_detection_configs = _cfg_factory(self.eval_version)
+
+    def load_data_list(self):
+        """Bridge mmdet3d 2.x load_data_list → 1.x load_annotations.
+
+        mmdet3d 2.x BaseDataset.full_init() calls load_data_list() and stores
+        the result in self.data_list.  The original code uses self.data_infos.
+        We load via the legacy load_annotations() and keep both attributes in
+        sync so all downstream code works unchanged.
+        """
+        # load_interval was a NuScenesDataset 1.x kwarg; default to 1 if absent
+        if not hasattr(self, 'load_interval'):
+            self.load_interval = 1
+        data_infos = self.load_annotations(self.ann_file)
+        self.data_infos = data_infos
+        # Return a SHALLOW COPY so that self.data_list and self.data_infos are
+        # different list objects.  BaseDataset._serialize_data() calls
+        # self.data_list.clear() in-place; if both attributes pointed to the
+        # same list, self.data_infos would also be cleared → __len__ returns 0
+        # → ZeroDivisionError in DistributedSampler.
+        return list(data_infos)
 
     def __len__(self):
         if not self.is_debug:
             return len(self.data_infos)
         else:
             return self.len_debug
+
+    def pre_pipeline(self, results):
+        """Initialization before data preparation.
+
+        Mimics mmdet3d 1.x Custom3DDataset.pre_pipeline() which was removed in
+        mmdet3d 2.x.  Downstream pipeline transforms expect these fields to be
+        present in the results dict.
+        """
+        results['img_fields'] = []
+        results['bbox3d_fields'] = []
+        results['pts_mask_fields'] = []
+        results['pts_seg_fields'] = []
+        results['bbox_fields'] = []
+        results['mask_fields'] = []
+        results['seg_fields'] = []
+        results['box_type_3d'] = self.box_type_3d
+        results['box_mode_3d'] = self.box_mode_3d
 
     def load_annotations(self, ann_file):
         """Load annotations from ann_file.
@@ -333,6 +395,14 @@ class SPDE2EDataset(NuScenesDataset):
         input_dict = self.get_data_info(index, agent_name=agent_name)
         self.pre_pipeline(input_dict)
         example = self.pipeline(input_dict)
+
+        # mmdet3d 2.x: MultiScaleFlipAug3D returns a LIST of augmented dicts.
+        # mmdet3d 1.x returned a DICT where each value was a list of
+        # DataContainers (one per augmentation).  Convert 2.x → 1.x format so
+        # the rest of this function works unchanged.
+        if isinstance(example, list):
+            aug_dicts = example
+            example = {k: [d[k] for d in aug_dicts] for k in aug_dicts[0]}
 
         img_metas = example['img_metas']
         img_metas = img_metas[0].data

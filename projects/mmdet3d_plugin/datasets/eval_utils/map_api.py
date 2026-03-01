@@ -31,7 +31,14 @@ from nuscenes.utils.geometry_utils import view_points
 from functools import partial
 
 # Recommended style to use as the plots will show grids.
-plt.style.use('seaborn-whitegrid')
+# 'seaborn-whitegrid' was renamed in matplotlib 3.6+; use fallback gracefully.
+try:
+    plt.style.use('seaborn-whitegrid')
+except OSError:
+    try:
+        plt.style.use('seaborn-v0_8-whitegrid')
+    except OSError:
+        pass  # no grid style available; continue without it
 
 # Define a map geometry type for polygons and lines.
 Geometry = Union[Polygon, LineString]
@@ -2105,8 +2112,10 @@ class NuScenesMapExplorer:
         def int_coords(x):
             # function to round and convert to int
             return np.array(x).round().astype(np.int32)
-        exteriors = [int_coords(poly.exterior.coords) for poly in polygons]
-        interiors = [int_coords(pi.coords) for poly in polygons for pi in poly.interiors]
+        # Shapely 2.x removed direct iteration over MultiPolygon; use .geoms
+        geoms = polygons.geoms if hasattr(polygons, 'geoms') else polygons
+        exteriors = [int_coords(poly.exterior.coords) for poly in geoms]
+        interiors = [int_coords(pi.coords) for poly in geoms for pi in poly.interiors]
         cv2.fillPoly(mask, exteriors, 1)
         cv2.fillPoly(mask, interiors, 0)
         return mask

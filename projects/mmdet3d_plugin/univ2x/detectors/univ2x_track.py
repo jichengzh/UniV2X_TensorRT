@@ -90,7 +90,7 @@ class UniV2XTrack(MVXTwoStageDetector):
             pts_bbox_head=pts_bbox_head,
             train_cfg=train_cfg,
             test_cfg=test_cfg,
-            pretrained=pretrained,
+            # pretrained= removed: mmdet3d 2.x uses init_cfg instead
         )
 
         self.grid_mask = GridMask(

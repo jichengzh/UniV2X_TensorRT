@@ -1,5 +1,9 @@
 from __future__ import division
 import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import compat  # noqa: F401 – must be first; patches mmcv/mmdet/mmdet3d APIs
+
 import argparse
 import cv2
 import torch
